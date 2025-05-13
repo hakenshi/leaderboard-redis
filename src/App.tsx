@@ -35,7 +35,7 @@ export default function App() {
 
   return (
     <main>
-      {/* <div className="overlay"></div> */}
+      <div className="overlay"></div>
       <section>
         <div className="table-title">
           <h1>Leaderboard</h1>
