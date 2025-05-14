@@ -13,7 +13,6 @@ type Leaderboard = {
 export default function App() {
 
   const [leaderboards, setLeaderboards] = useState<Leaderboard[]>([])
-
   useEffect(() => {
     fetch('http://localhost:3000/leaderboard/top?limit=10')
       .then(response => response.ok && response.json())

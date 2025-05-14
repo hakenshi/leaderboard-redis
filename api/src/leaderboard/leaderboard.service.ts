@@ -1,5 +1,6 @@
 import { faker } from '@faker-js/faker';
 import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Users } from 'generated/prisma';
 import Redis from 'ioredis';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { RedisService } from 'src/redis/redis.service';
@@ -21,17 +22,16 @@ export class LeaderboardService implements OnModuleInit {
   }
 
   async syncLeaderBoardFromDb() {
-    const users = await this.prisma.users.findMany()
-    const pipeline = this.redis.pipeline()
-    users.forEach(user => {
-      pipeline.zadd(this.leaderboardKey, user.score, user.gamertag)
-    })
-    await pipeline.exec()
+    const users = await this.prisma.users.findMany();
+    for (const user of users) {
+      await this.redis.zadd(this.leaderboardKey, user.score, `user:${user.id}`);
+      await this.redis.set(`user:${user.id}`, JSON.stringify(user));
+    }
   }
 
   async addOrUpdateUser() {
-    
-    const { score, gamertag } = await this.prisma.users.create({
+
+    const user = await this.prisma.users.create({
       data: {
         gamertag: faker.person.firstName(),
         car: randomCar(),
@@ -40,27 +40,35 @@ export class LeaderboardService implements OnModuleInit {
       }
     })
 
-    await this.redis.zadd(this.leaderboardKey, score, gamertag)
+    await this.redis.zadd(this.leaderboardKey, user.score, `user:${user.id}`)
+    await this.redis.set(`user:${user.id}`, JSON.stringify(user))
   }
 
-  async getTopUsers(limit = 10) {
-    const result = await this.redis.zrevrange(this.leaderboardKey, 0, limit, 'WITHSCORES');
-    const users: { gamertag: string, score: number }[] = [];
-    for (let i = 0; i < result.length; i += 2) {
-      users.push({
-        gamertag: result[i],
-        score: Number(result[i + 1]),
-      });
-    }
+  async getTopUsers(limit = 10): Promise<Users[]> {
+    const results = await this.redis.zrevrange(this.leaderboardKey, 0, limit - 1, 'WITHSCORES');
+    const users: Users[] = [];
 
-    const gamertags = users.map(u => u.gamertag)
-    const usersData = await this.prisma.users.findMany({
-      where: { gamertag: { in: gamertags } },
-      select: { gamertag: true, score: true, level: true, car: true }
-    })
-    return users.map(u => ({
-      ...usersData.find(ud => ud.gamertag === u.gamertag),
-      score: u.score
-    }));
+    for (let i = 0; i < results.length; i += 2) {
+      const member = results[i]
+      const userDataString = await this.redis.get(member)
+
+      let userData: Users | null;
+
+      if (userDataString) {
+        userData = JSON.parse(userDataString) as Users
+      } else {
+        const id = member.replace("user:", '')
+        userData = await this.prisma.users.findUnique({ where: { id: parseInt(id) } })
+
+        if (userData) {
+          await this.redis.set(member, JSON.stringify(userData))
+        }
+      }
+
+      if (userData) {
+        users.push(userData,)
+      }
+    }
+    return users;
   }
 }
